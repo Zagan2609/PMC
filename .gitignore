@@ -219,5 +219,5 @@ __marimo__/
 
 # === PMC project ===
 backend/pmc.db
-frontend/data/full/
+data/full/
 tools/_debug*

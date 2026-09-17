@@ -5,7 +5,7 @@
 
 ## 在线访问（GitHub Pages）
 
-静态站点直接打开 `frontend/index.html` 即可，无需后端：
+静态站点直接打开仓库根目录的 `index.html` 即可，无需后端：
 
 ```
 https://zagan2609.github.io/PMC/
@@ -25,13 +25,12 @@ https://zagan2609.github.io/PMC/
 ## 目录结构
 
 ```
-PMC_sofeware/
-├─ frontend/                 # 静态前端（Vue3 + ECharts + DHTMLX Gantt, 全 CDN）
-│  ├─ index.html
-│  ├─ css/style.css
-│  ├─ js/app.js              # 主应用（视图/图表/交互）
-│  ├─ js/engines.js          # 预测 / MRP / 排产 运算引擎
-│  └─ data/*.json            # 由 build_data.py 从 Excel 生成
+PMC/                         # 仓库根 = GitHub Pages 站点根
+├─ index.html                # 入口
+├─ css/style.css
+├─ js/app.js                 # 主应用（视图/图表/交互）
+├─ js/engines.js             # 预测 / MRP / 排产 运算引擎
+├─ data/*.json               # 由 build_data.py 从 Excel 生成
 ├─ backend/                  # 可选增强：FastAPI + SQLite
 │  ├─ main.py
 │  └─ requirements.txt
@@ -44,7 +43,7 @@ PMC_sofeware/
 ### 静态前端（推荐，零依赖）
 
 ```powershell
-python -m http.server 8123 --directory frontend
+python -m http.server 8123
 # 浏览器打开 http://127.0.0.1:8123/
 ```
 
@@ -62,7 +61,7 @@ python -m uvicorn main:app --port 8000 --app-dir backend
 
 ```powershell
 python tools/build_data.py
-# 读取 Excel → 输出到 frontend/data/*.json
+# 读取 Excel → 输出到 data/*.json
 ```
 
 ## 数据源

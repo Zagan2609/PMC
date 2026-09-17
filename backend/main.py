@@ -21,8 +21,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(os.path.dirname(BASE_DIR), "frontend")
-DATA_DIR = os.path.join(FRONTEND_DIR, "data")
+ROOT_DIR = os.path.dirname(BASE_DIR)
+FRONTEND_DIR = ROOT_DIR
+DATA_DIR = os.path.join(ROOT_DIR, "data")
 DB_PATH = os.path.join(BASE_DIR, "pmc.db")
 
 app = FastAPI(title="PMC 生产制造管理系统 API", version="1.0.0")

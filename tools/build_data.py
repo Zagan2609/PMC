@@ -15,7 +15,7 @@ import pandas as pd
 
 SRC_ROOT = r"D:\BaiduNetdiskDownload\PMC\富智康资料\工作资料\LE0工作資料\LE0工作資料"
 DA_CHENG_DIR = os.path.join(SRC_ROOT, "達成")
-OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "data")
+OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 FULL_DIR = os.path.join(OUT_DIR, "full")
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(FULL_DIR, exist_ok=True)
