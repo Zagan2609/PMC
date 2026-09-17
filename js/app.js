@@ -8,6 +8,9 @@ const DATA_FILES = {
   achievement: 'data/achievement.json',
   daily: 'data/daily.json',
   schedule_plan: 'data/schedule_plan.json',
+  schedule_daily: 'data/schedule_daily.json',
+  forecast: 'data/forecast.json',
+  gen_schedule: 'data/gen_schedule.json',
   shipping: 'data/shipping.json',
   production_report: 'data/production_report.json',
   _index: 'data/_index.json'
@@ -28,6 +31,8 @@ createApp({
         { id: 'dashboard', name: '总览看板', icon: '&#128202;' },
         { id: 'achievement', name: '达成看板', icon: '&#128200;' },
         { id: 'forecast', name: '产能预测', icon: '&#128302;' },
+        { id: 'linesched', name: '线体排产表', icon: '&#128203;' },
+        { id: 'fcsched', name: '预测排产', icon: '&#128293;' },
         { id: 'gantt', name: '排产甘特', icon: '&#128197;' },
         { id: 'mrp', name: 'MRP / 排产表', icon: '&#128230;' },
         { id: 'entry', name: '数据录入', icon: '&#9997;' }
@@ -39,6 +44,9 @@ createApp({
         achievement: { monthly: [], by_year: [], by_day: [] },
         daily: { smt: [], board_test: [] },
         schedule_plan: { orders: [], weeks: [] },
+      schedule_daily: { source: null, records: [] },
+      forecast: { lines: [], by_date_total: [], days: 60 },
+      gen_schedule: { source: null, records: [] },
         master_plan: { ea: [], sh: [] },
         shipping: { shipping: [], stock: [] },
         production_report: { lines: [] },
@@ -59,6 +67,17 @@ createApp({
       ganttVersion: 'ALL',
       ganttZoom: 'week',
       ganttApi: null,
+
+      // 线体排产表
+      lsProcess: 'ALL',
+      lsLine: 'ALL',
+      lsStart: '',
+      lsEnd: '',
+
+      // 预测排产
+      fcLine: 'ALL',
+      fcScope: 'forecast',
+      fcGenProc: 'ALL',
 
       // mrp
       mrpVersion: 'ALL',
@@ -88,6 +107,9 @@ createApp({
       return { target, output, diff: output - target, rate: target ? output / target : 0 };
     },
     schedule() { return this.raw.schedule_plan || { orders: [], weeks: [] }; },
+    schedule_daily() { return this.raw.schedule_daily || { source: null, records: [] }; },
+    forecast() { return this.raw.forecast || { lines: [], by_date_total: [], days: 60, pack_sam_lines: 0, start_date: '', end_date: '' }; },
+    gen_schedule() { return this.raw.gen_schedule || { source: null, records: [], weeks: [] }; },
 
     kpi() {
       const m = (this.raw.achievement && this.raw.achievement.monthly) || [];
@@ -111,6 +133,82 @@ createApp({
     },
     mrp() {
       return this.mrpResult || { rows: [], grossReq: 0, stock: 0, netReq: 0, gap: 0 };
+    },
+
+    /* ---- 线体排产表 ---- */
+    lsLines() {
+      const recs = this.schedule_daily.records || [];
+      return [...new Set(recs.map(r => r.line))].sort();
+    },
+    lsFiltered() {
+      const recs = this.schedule_daily.records || [];
+      return recs.filter(r =>
+        (this.lsProcess === 'ALL' || r.process === this.lsProcess) &&
+        (this.lsLine === 'ALL' || r.line === this.lsLine) &&
+        (!this.lsStart || r.date >= this.lsStart) &&
+        (!this.lsEnd || r.date <= this.lsEnd)
+      );
+    },
+    lsSummary() {
+      let qty = 0, byProc = {};
+      this.lsFiltered.forEach(r => {
+        qty += (+r.qty || 0);
+        byProc[r.process] = (byProc[r.process] || 0) + (+r.qty || 0);
+      });
+      return { count: this.lsFiltered.length, qty, byProc };
+    },
+
+    /* ---- 预测排产 ---- */
+    fcLines() { return this.forecast.lines || []; },
+    fcLineData() {
+      if (this.fcLine === 'ALL') {
+        // 全厂合计
+        const dates = this.fcLines.length ? this.fcLines[0].daily.map(d => d.date) : [];
+        return dates.map((date, k) => ({
+          date,
+          forecast: this.fcLines.reduce((a, l) => a + ((l.daily[k] && l.daily[k].forecast) || 0), 0),
+          rest: this.fcLines.every(l => !l.daily[k] || l.daily[k].rest)
+        }));
+      }
+      const l = this.fcLines.find(x => x.line === this.fcLine);
+      return l ? l.daily.map(d => ({ date: d.date, forecast: d.forecast, rest: d.rest })) : [];
+    },
+    fcTotal60() { return this.fcLineData.reduce((a, d) => a + d.forecast, 0); },
+    fcWorkDays() { return this.fcLineData.filter(d => !d.rest).length; },
+    fcCapacityTotal() {
+      if (this.fcLine === 'ALL') return this.fcLines.reduce((a, l) => a + l.daily.filter(d => !d.rest).reduce((s, d) => s + (d.capacity || 0), 0), 0);
+      const l = this.fcLines.find(x => x.line === this.fcLine);
+      return l ? l.daily.filter(d => !d.rest).reduce((s, d) => s + (d.capacity || 0), 0) : 0;
+    },
+    fcRulesLines() { return this.fcLines.filter(l => l.uph && l.shift_cap); },
+    genRecords() {
+      return (this.gen_schedule.records || []).filter(r => this.fcGenProc === 'ALL' || r.process === this.fcGenProc);
+    },
+    genPivot() {
+      // 线体 × 日期 透视 (取前14天)
+      const recs = this.genRecords;
+      if (!recs.length) return { dates: [], rows: [] };
+      const dates = [...new Set(recs.map(r => r.date))].sort().slice(0, 14);
+      const lines = [...new Set(recs.map(r => r.line))].sort();
+      const map = {};
+      recs.forEach(r => {
+        const k = r.line + '|' + r.date;
+        map[k] = (map[k] || 0) + r.qty;
+      });
+      return {
+        dates,
+        rows: lines.map(ln => ({
+          line: ln,
+          cells: dates.map(d => map[ln + '|' + d] || 0),
+          total: dates.reduce((a, d) => a + (map[ln + '|' + d] || 0), 0)
+        }))
+      };
+    },
+    genSummary() {
+      const byProc = {};
+      let qty = 0;
+      this.genRecords.forEach(r => { byProc[r.process] = (byProc[r.process] || 0) + r.qty; qty += r.qty; });
+      return { count: this.genRecords.length, qty, byProc };
     }
   },
 
@@ -161,8 +259,46 @@ createApp({
       if (v === 'dashboard') { this.renderMonthly(); this.renderProcess(); this.renderLine(); this.renderDaily(); }
       else if (v === 'achievement') this.renderAchTrend();
       else if (v === 'forecast') this.runForecast();
+      else if (v === 'linesched') this.renderLineSched();
+      else if (v === 'fcsched') this.renderFcSched();
       else if (v === 'gantt') this.buildGantt();
       else if (v === 'mrp') { this.runMRP(); }
+    },
+
+    /* ---------- 线体排产表 (Excel解析) ---------- */
+    renderLineSched() {
+      if (!this.lsStart) {
+        const recs = this.schedule_daily.records || [];
+        if (recs.length) {
+          const dates = [...new Set(recs.map(r => r.date))].sort();
+          this.lsStart = dates[0];
+          this.lsEnd = dates[dates.length - 1];
+        }
+      }
+      this.charts.ls = ECHARTS(this.$refs.chartLsProc, {
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: {},
+        grid: { left: 70, right: 20, top: 30, bottom: 30 },
+        xAxis: { type: 'value' },
+        yAxis: { type: 'category', data: Object.keys(this.lsSummary.byProc) },
+        series: [{ type: 'bar', name: '排产量', data: Object.values(this.lsSummary.byProc), itemStyle: { color: '#2563eb' }, label: { show: true, position: 'right' } }]
+      });
+    },
+
+    /* ---------- 预测排产 ---------- */
+    renderFcSched() {
+      const data = this.fcLineData;
+      const wkLabels = data.map(d => d.date.slice(5));
+      this.charts.fcs = ECHARTS(this.$refs.chartFcSched, {
+        tooltip: { trigger: 'axis' },
+        grid: { left: 70, right: 30, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: wkLabels },
+        yAxis: { type: 'value', name: this.fcLine === 'ALL' ? '全厂合计' : this.fcLine },
+        series: [
+          { name: '预测达成', type: 'line', data: data.map(d => d.forecast), smooth: true, areaStyle: { opacity: .12 }, itemStyle: { color: '#2563eb' }, lineStyle: { width: 2.5 } },
+          { name: '休息日', type: 'bar', data: data.map(d => d.rest ? 0 : null), markArea: { itemStyle: { color: 'rgba(220,38,38,.08)' }, data: [{ xAxis: -1 }, { xAxis: -1 }] } }
+        ]
+      });
     },
 
     /* ---------- 日报序列 ---------- */
@@ -395,6 +531,46 @@ createApp({
       a.download = name;
       a.click();
       URL.revokeObjectURL(a.href);
+    },
+
+    /* ---------- 通用导出 ---------- */
+    csvBlob(rows) {
+      return new Blob(['\ufeff' + rows.map(r => r.map(c => `"${c == null ? '' : c}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+    },
+    xlsBlob(sheetName, rows) {
+      const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><table border="1">${rows.map((r, i) => '<tr>' + r.map(c => `<${i === 0 ? 'th' : 'td'} style="${i === 0 ? 'background:#dbeafe;font-weight:bold' : ''}">${c == null ? '' : c}</${i === 0 ? 'th' : 'td'}>`).join('') + '</tr>').join('')}</table></body></html>`;
+      return new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    },
+    exportBoth(base, rows) {
+      this.download(this.csvBlob(rows), base + '.csv');
+      setTimeout(() => this.download(this.xlsBlob(base, rows), base + '.xls'), 300);
+    },
+    exportLineSched() {
+      const rows = [['日期', '星期', '班别', '线体', '制程', '区域', '机种/料号', '工单批量', '版本', 'SAP/BLT/Fmes工单', '当班排配数量', '标准人力', '排配工时', '数据来源']];
+      const wd = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+      this.lsFiltered.forEach(r => rows.push([r.date, wd[new Date(r.date).getDay() === 0 ? 6 : new Date(r.date).getDay() - 1] || '', r.shift, r.line, r.process, r.area, r.model, r.batch, r.version, r.wo, r.qty, r.manpower, r.hours, this.schedule_daily.source]));
+      this.exportBoth('LE0线体排产表', rows);
+    },
+    exportForecast() {
+      const rows = [['线体', '制程', 'UPH', '日产能(UPH基准)', '近21天日均', '达成率', '日期', '星期', '工作/休息', '星期系数', '预测达成量']];
+      const wd = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+      const lines = this.fcLine === 'ALL' ? this.fcLines : this.fcLines.filter(l => l.line === this.fcLine);
+      lines.forEach(l => l.daily.forEach(d => rows.push([l.line, l.process, l.uph, l.capacity_daily, Math.round(l.base_daily), (l.rate * 100).toFixed(1) + '%', d.date, wd[d.weekday], d.rest ? '休息' : '工作', d.factor, d.forecast])));
+      this.exportBoth('LE0线体60天预测', rows);
+    },
+    exportGenSched() {
+      const rows = [['日期', '周别', '星期', '线体', '制程', '版本', '机种/料号', '说明', '建议排产量', '换线', '计划工单', 'PACK三星线数']];
+      const wd = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+      this.genRecords.forEach(r => {
+        const w = new Date(r.date).getDay();
+        rows.push([r.date, r.week, wd[w === 0 ? 6 : w - 1], r.line, r.process, r.version, r.model, r.desc, r.qty, r.co ? '换线' : '', r.wo, r.pack_sam_lines != null ? r.pack_sam_lines : '']);
+      });
+      this.exportBoth('LE0自动排产表', rows);
+    },
+    exportForecastRules() {
+      const rows = [['线体', '制程', '楼层', '版本', 'UPH', '班产能(11.5h)', '工时损耗说明', '近21天日均', '换线频率(次/周)']];
+      this.fcRulesLines.forEach(l => rows.push([l.line, l.process, l.floor, l.version || '不限', l.uph, l.shift_cap, l.note, Math.round(l.base_daily), l.co_per_week]));
+      this.exportBoth('LE0_UPH标准工时', rows);
     },
 
     /* ---------- 数据录入 ---------- */

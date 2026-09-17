@@ -211,7 +211,182 @@
       </div>
     </section>
 
-    <!-- ============ 4. 排产甘特图 ============ -->
+    <!-- ============ 4. 线体排产表 (Excel解析) ============ -->
+    <section v-show="view==='linesched'" class="page">
+      <div class="toolbar">
+        <label>制程
+          <select v-model="lsProcess" @change="lsLine='ALL'">
+            <option value="ALL">全部制程</option>
+            <option v-for="p in [...new Set(schedule_daily.records.map(r=>r.process))]" :value="p">{{ p }}</option>
+          </select>
+        </label>
+        <label>线体
+          <select v-model="lsLine">
+            <option value="ALL">全部线体</option>
+            <option v-for="l in lsLines" :value="l">{{ l }}</option>
+          </select>
+        </label>
+        <label>开始 <input type="date" v-model="lsStart"></label>
+        <label>结束 <input type="date" v-model="lsEnd"></label>
+        <button class="btn" @click="exportLineSched">导出 CSV/Excel</button>
+      </div>
+
+      <div class="kpi-grid small">
+        <div class="kpi"><div class="kpi-label">排产记录</div><div class="kpi-value">{{ fmt(lsSummary.count) }}</div><div class="kpi-foot">{{ schedule_daily.source }}</div></div>
+        <div class="kpi"><div class="kpi-label">排产总量</div><div class="kpi-value">{{ fmt(lsSummary.qty) }}</div><div class="kpi-foot">当班排配合计</div></div>
+        <div class="kpi" v-for="(v,k) in lsSummary.byProc" :key="k">
+          <div class="kpi-label">{{ k }}</div><div class="kpi-value">{{ fmt(v) }}</div><div class="kpi-foot">制程小计</div>
+        </div>
+      </div>
+
+      <div class="card" v-if="Object.keys(lsSummary.byProc).length">
+        <div class="card-head"><h2>各制程排产量</h2></div>
+        <div ref="chartLsProc" class="chart short"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>线体排产明细</h2><span class="hint">{{ lsStart || '…' }} ~ {{ lsEnd || '…' }} · 共 {{ lsFiltered.length }} 条</span></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>日期</th><th>班</th><th>线体</th><th>制程</th><th>机种/料号</th><th>版本</th><th>工单</th><th>批量</th><th>当班排配</th><th>人力</th><th>工时</th></tr></thead>
+            <tbody>
+              <tr v-for="(r,i) in lsFiltered" :key="i">
+                <td class="strong">{{ r.date }}</td>
+                <td>{{ r.shift }}</td>
+                <td class="strong">{{ r.line }}</td>
+                <td><span class="rate-pill">{{ r.process }}</span></td>
+                <td>{{ r.model }}</td>
+                <td class="muted">{{ r.version }}</td>
+                <td class="muted">{{ r.wo }}</td>
+                <td>{{ r.batch }}</td>
+                <td class="strong pos">{{ fmt(r.qty) }}</td>
+                <td>{{ r.manpower }}</td>
+                <td>{{ r.hours }}</td>
+              </tr>
+              <tr v-if="!lsFiltered.length"><td colspan="11" class="empty">筛选条件下无排产记录</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 5. 预测排产 (60天预测 + 自动排产) ============ -->
+    <section v-show="view==='fcsched'" class="page">
+      <div class="toolbar">
+        <label>线体
+          <select v-model="fcLine">
+            <option value="ALL">全厂合计</option>
+            <option v-for="l in fcLines" :value="l.line">{{ l.line }} ({{ l.process }})</option>
+          </select>
+        </label>
+        <button class="btn" @click="exportForecast">导出60天预测</button>
+        <button class="btn ghost" @click="exportGenSched">导出自动排产表</button>
+        <button class="btn ghost" @click="exportForecastRules">导出UPH标准工时</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>UPH 标准工时与产能规则</h2><span class="hint">班产能 = UPH × 11.5h · 周一开线损失 · 休息前夜班损失 · 换线损失</span></div>
+        <div class="table-wrap short">
+          <table class="data-table compact">
+            <thead><tr><th>线体</th><th>制程</th><th>楼层</th><th>版本限定</th><th>UPH</th><th>班产能</th><th>日产能</th><th>换线损失</th><th>规则说明</th></tr></thead>
+            <tbody>
+              <tr v-for="l in fcRulesLines" :key="'r'+l.line">
+                <td class="strong">{{ l.line }}</td><td>{{ l.process }}</td><td>{{ l.floor }}</td>
+                <td><span class="rate-pill" :class="l.version==='EA'?'warn':l.version==='SH'?'good':''">{{ l.version || '不限' }}</span></td>
+                <td>{{ l.uph }}</td><td>{{ fmt(l.shift_cap) }}</td><td>{{ fmt(l.shift_cap*2) }}</td>
+                <td>{{ l.process==='SMT' ? '3h' : '1h' }}</td>
+                <td class="muted">{{ l.note }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="kpi-grid small">
+        <div class="kpi"><div class="kpi-label">预测周期</div><div class="kpi-value">60 天</div><div class="kpi-foot">{{ forecast.start_date }} ~ {{ forecast.end_date }}</div></div>
+        <div class="kpi"><div class="kpi-label">工作天数</div><div class="kpi-value">{{ fcWorkDays }}</div><div class="kpi-foot">{{ fcLine==='ALL'?'全厂排产日历':'该线体工作日' }}</div></div>
+        <div class="kpi"><div class="kpi-label">预测达成总量</div><div class="kpi-value">{{ fmt(fcTotal60) }}</div><div class="kpi-foot">基准: 近21天日均 × 星期系数 × 达成率</div></div>
+        <div class="kpi"><div class="kpi-label">UPH 产能上限</div><div class="kpi-value">{{ fmt(fcCapacityTotal) }}</div><div class="kpi-foot">日产能 × 工作天</div></div>
+        <div class="kpi" :class="fcTotal60<=fcCapacityTotal?'good':'bad'">
+          <div class="kpi-label">产能负荷率</div>
+          <div class="kpi-value">{{ fcCapacityTotal ? (fcTotal60/fcCapacityTotal*100).toFixed(1)+'%' : '-' }}</div>
+          <div class="kpi-foot">{{ fcTotal60<=fcCapacityTotal?'可达成':'超出 UPH 产能' }}</div>
+        </div>
+        <div class="kpi"><div class="kpi-label">组装三星线数</div><div class="kpi-value">{{ forecast.pack_sam_lines }} / 3</div><div class="kpi-foot">PACK-1 日产能 {{ fmt((forecast.pack_sam_lines===3?3650:forecast.pack_sam_lines===2?3475:forecast.pack_sam_lines===1?3300:3000)*2) }}</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>未来 60 天逐日预测</h2><span class="hint">{{ fcLine==='ALL' ? '全厂合计' : fcLine }} · 休息日自动跳过</span></div>
+        <div ref="chartFcSched" class="chart tall"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>各线体预测参数</h2><span class="hint">UPH 标准产能 × 近期实际</span></div>
+          <div class="table-wrap short">
+            <table class="data-table compact">
+              <thead><tr><th>线体</th><th>制程</th><th>UPH</th><th>日产能</th><th>近均</th><th>达成率</th><th>工作/60天</th><th>60天预测</th></tr></thead>
+              <tbody>
+                <tr v-for="l in fcLines" :key="l.line" :class="{sel: fcLine===l.line}" @click="fcLine=l.line" style="cursor:pointer">
+                  <td class="strong">{{ l.line }}</td><td>{{ l.process }}</td>
+                  <td>{{ l.uph || '-' }}</td><td>{{ fmt(l.capacity_daily) }}</td>
+                  <td>{{ fmt(l.base_daily) }}</td>
+                  <td><span class="rate-pill good">{{ (l.rate*100).toFixed(0) }}%</span></td>
+                  <td>{{ l.daily.filter(d=>!d.rest).length }}</td>
+                  <td class="strong">{{ fmt(l.daily.reduce((a,d)=>a+d.forecast,0)) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>自动排产 · 线体×日期 透视</h2>
+            <label style="font-size:12px">制程
+              <select v-model="fcGenProc" style="padding:2px 6px">
+                <option value="ALL">全部</option>
+                <option v-for="p in [...new Set((gen_schedule.records||[]).map(r=>r.process))]" :value="p">{{ p }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-wrap short">
+            <table class="data-table compact">
+              <thead><tr><th>线体</th><th v-for="d in genPivot.dates" :key="d">{{ d.slice(5) }}</th><th>合计</th></tr></thead>
+              <tbody>
+                <tr v-for="row in genPivot.rows" :key="row.line">
+                  <td class="strong">{{ row.line }}</td>
+                  <td v-for="(v,i) in row.cells" :key="i" :class="v?'':'muted'">{{ v || '-' }}</td>
+                  <td class="strong pos">{{ fmt(row.total) }}</td>
+                </tr>
+                <tr v-if="!genPivot.rows.length"><td colspan="15" class="empty">无自动排产数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">自动排产: 按 RU Plan 周需求 × 各线体 UPH 产能占比 × 排产日历, 自动分配到线体×工作日。前 14 天透视。</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>自动排产明细 (前 200 条)</h2><span class="hint">共 {{ fmt(genSummary.count) }} 条 · 总量 {{ fmt(genSummary.qty) }}</span></div>
+        <div class="table-wrap short">
+          <table class="data-table compact">
+            <thead><tr><th>日期</th><th>周</th><th>线体</th><th>制程</th><th>版本</th><th>料号</th><th>建议排产</th><th>换线</th><th>计划工单</th></tr></thead>
+            <tbody>
+              <tr v-for="(r,i) in genRecords.slice(0,200)" :key="i">
+                <td>{{ r.date }}</td><td>{{ r.week }}</td>
+                <td class="strong">{{ r.line }}</td><td>{{ r.process }}</td>
+                <td><span class="rate-pill" :class="r.version==='EA'?'warn':'good'">{{ r.version }}</span></td>
+                <td>{{ r.model }}</td>
+                <td class="strong pos">{{ fmt(r.qty) }}</td>
+                <td><span v-if="r.co" class="rate-pill bad">换线</span><span v-else class="muted">-</span></td>
+                <td class="muted">{{ r.wo }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 6. 排产甘特图 ============ -->
     <section v-show="view==='gantt'" class="page">
       <div class="toolbar">
         <label>版本 <select v-model="ganttVersion"><option value="ALL">全部</option><option>EA</option><option>SH</option></select></label>
