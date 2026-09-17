@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='22' font-size='15' font-family='Arial' font-weight='bold' fill='white' text-anchor='middle'>P</text></svg>">
+<title>PMC 生产制造管理系统 · LE0</title>
+<link rel="stylesheet" href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">PMC</div>
+      <div>
+        <h1>生产制造管理系统</h1>
+        <span class="sub">LE0 线体达成 · 产能预测 · MRP 排产</span>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button v-for="t in tabs" :key="t.id" :class="{active: view===t.id}" @click="switchView(t.id)">
+        <span class="ico" v-html="t.icon"></span>{{ t.name }}
+      </button>
+    </nav>
+    <div class="status">
+      <span class="dot" :class="online?'on':'off'"></span>
+      <span>{{ online ? '数据已加载' : '加载中…' }}</span>
+      <button class="btn-mini" @click="reloadData">刷新数据</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ 1. 总览看板 ============ -->
+    <section v-show="view==='dashboard'" class="page">
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-label">当月计划产量</div>
+          <div class="kpi-value">{{ fmt(kpi.plan) }}</div>
+          <div class="kpi-foot">单位: PCS</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">当月实际产出</div>
+          <div class="kpi-value">{{ fmt(kpi.actual) }}</div>
+          <div class="kpi-foot">{{ kpi.monthLabel }}</div>
+        </div>
+        <div class="kpi" :class="kpi.rate>=1?'good':'warn'">
+          <div class="kpi-label">综合达成率</div>
+          <div class="kpi-value">{{ (kpi.rate*100).toFixed(1) }}%</div>
+          <div class="kpi-foot">计划 vs 实际</div>
+        </div>
+        <div class="kpi" :class="kpi.gap>=0?'good':'bad'">
+          <div class="kpi-label">缺口 / 盈余</div>
+          <div class="kpi-value">{{ kpi.gap>=0?'+':'' }}{{ fmt(kpi.gap) }}</div>
+          <div class="kpi-foot">{{ kpi.gap>=0?'超出计划':'低于计划' }}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">在线线体</div>
+          <div class="kpi-value">{{ lines.length }}</div>
+          <div class="kpi-foot">SMT / BLT / ASSY / PACK</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">排产订单</div>
+          <div class="kpi-value">{{ schedule.orders.length }}</div>
+          <div class="kpi-foot">EA + SH 机种</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>月度达成率趋势</h2><span class="hint">计划 / 达成 / 达成率</span></div>
+          <div ref="chartMonthly" class="chart"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>各制程达成对比</h2><span class="hint">最近一年累计</span></div>
+          <div ref="chartProcess" class="chart"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>线体 UPH 产能排行</h2></div>
+          <div ref="chartLine" class="chart tall"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>近 14 日达成率（日报）</h2></div>
+          <div ref="chartDaily" class="chart tall"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 2. 达成看板 ============ -->
+    <section v-show="view==='achievement'" class="page">
+      <div class="toolbar">
+        <label>数据源
+          <select v-model="achSource">
+            <option value="smt">SMT 生产日报</option>
+            <option value="board_test">板测生产日报</option>
+          </select>
+        </label>
+        <label>日期
+          <select v-model="achDate">
+            <option v-for="d in achDates" :key="d" :value="d">{{ d }}</option>
+          </select>
+        </label>
+        <button class="btn" @click="exportCSV">导出 CSV</button>
+      </div>
+
+      <div class="kpi-grid small">
+        <div class="kpi"><div class="kpi-label">当日目标</div><div class="kpi-value">{{ fmt(achSummary.target) }}</div></div>
+        <div class="kpi"><div class="kpi-label">当日产出</div><div class="kpi-value">{{ fmt(achSummary.output) }}</div></div>
+        <div class="kpi" :class="achSummary.rate>=1?'good':'warn'"><div class="kpi-label">达成率</div><div class="kpi-value">{{ (achSummary.rate*100).toFixed(1) }}%</div></div>
+        <div class="kpi"><div class="kpi-label">差异</div><div class="kpi-value">{{ achSummary.diff>=0?'+':'' }}{{ fmt(achSummary.diff) }}</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>每日线体达成明细表</h2><span class="hint">{{ achDate }} · {{ achSourceName }}</span></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>线体</th><th>班别</th><th v-if="achSource==='smt'">线长</th>
+                <th>机种/版本</th><th>人力</th><th>目标产出</th><th>投入/半成品</th>
+                <th>良品/成品</th><th>差异</th><th>达成率</th><th>产能损失原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(r,i) in achRows" :key="i">
+                <td class="strong">{{ r.line }}</td>
+                <td>{{ r.shift }}</td>
+                <td v-if="achSource==='smt'">{{ r.leader }}</td>
+                <td>{{ r.model }}</td>
+                <td>{{ r.headcount }}</td>
+                <td>{{ fmt(r.target) }}</td>
+                <td>{{ fmt(r.input_qty) }}</td>
+                <td>{{ fmt(r.output_qty) }}</td>
+                <td :class="r.diff>=0?'pos':'neg'">{{ r.diff>=0?'+':'' }}{{ fmt(r.diff) }}</td>
+                <td><span class="rate-pill" :class="rateClass(r.achieve_rate)">{{ r.achieve_rate!=null?(r.achieve_rate*100).toFixed(1)+'%':'-' }}</span></td>
+                <td class="muted">{{ r.loss_reason }}</td>
+              </tr>
+              <tr v-if="!achRows.length"><td colspan="11" class="empty">当日无记录</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>达成率趋势</h2></div>
+        <div ref="chartAchTrend" class="chart"></div>
+      </div>
+    </section>
+
+    <!-- ============ 3. 产能预测 ============ -->
+    <section v-show="view==='forecast'" class="page">
+      <div class="toolbar">
+        <label>制程
+          <select v-model="fcProcess">
+            <option v-for="p in processList" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </label>
+        <label>预测方法
+          <select v-model="fcMethod">
+            <option value="ma">移动平均 (MA)</option>
+            <option value="ema">指数平滑 (EMA)</option>
+            <option value="linreg">线性回归 (Linear)</option>
+            <option value="blend">加权融合 (Blend)</option>
+          </select>
+        </label>
+        <label>预测周期 <input type="number" v-model.number="fcPeriods" min="1" max="12" style="width:70px"></label>
+      </div>
+
+      <div class="kpi-grid small">
+        <div class="kpi"><div class="kpi-label">历史平均达成率</div><div class="kpi-value">{{ (fc.avgRate*100).toFixed(1) }}%</div></div>
+        <div class="kpi"><div class="kpi-label">下期预测达成率</div><div class="kpi-value">{{ (fc.nextRate*100).toFixed(1) }}%</div></div>
+        <div class="kpi"><div class="kpi-label">建议产能</div><div class="kpi-value">{{ fmt(fc.capacity) }}</div></div>
+        <div class="kpi"><div class="kpi-label">预估出货</div><div class="kpi-value">{{ fmt(fc.shipEst) }}</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>产能预测曲线</h2><span class="hint">实线=历史达成 · 虚线=预测</span></div>
+        <div ref="chartForecast" class="chart tall"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>未来排产建议</h2></div>
+          <table class="data-table compact">
+            <thead><tr><th>周期</th><th>预测需求</th><th>建议产能</th><th>预计达成</th></tr></thead>
+            <tbody>
+              <tr v-for="(f,i) in fc.rows" :key="i">
+                <td>{{ f.label }}</td><td>{{ fmt(f.demand) }}</td>
+                <td>{{ fmt(f.capacity) }}</td>
+                <td><span class="rate-pill" :class="rateClass(f.rate)">{{ (f.rate*100).toFixed(1) }}%</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>预估出货数量</h2><span class="hint">基于库存 + 未来产出 - 需求</span></div>
+          <table class="data-table compact">
+            <thead><tr><th>制程</th><th>库存</th><th>未来产出</th><th>预估可出货</th></tr></thead>
+            <tbody>
+              <tr v-for="(s,i) in fc.shipRows" :key="i">
+                <td class="strong">{{ s.process }}</td><td>{{ fmt(s.stock) }}</td>
+                <td>{{ fmt(s.output) }}</td><td class="pos">{{ fmt(s.ship) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 4. 排产甘特图 ============ -->
+    <section v-show="view==='gantt'" class="page">
+      <div class="toolbar">
+        <label>版本 <select v-model="ganttVersion"><option value="ALL">全部</option><option>EA</option><option>SH</option></select></label>
+        <label>视图
+          <select v-model="ganttZoom" @change="applyZoom">
+            <option value="day">日</option><option value="week">周</option><option value="month">月</option>
+          </select>
+        </label>
+        <button class="btn" @click="rebuildGantt">重新生成</button>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>线体排产甘特图</h2><span class="hint">按周排产计划分配到各线体</span></div>
+        <div ref="ganttBox" class="gantt-box"></div>
+      </div>
+    </section>
+
+    <!-- ============ 5. MRP / 排产表 ============ -->
+    <section v-show="view==='mrp'" class="page">
+      <div class="toolbar">
+        <label>版本 <select v-model="mrpVersion"><option value="ALL">全部</option><option>EA</option><option>SH</option></select></label>
+        <button class="btn" @click="runMRP">运行 MRP 运算</button>
+        <button class="btn ghost" @click="exportMRP">导出排产表 CSV</button>
+      </div>
+      <div class="kpi-grid small">
+        <div class="kpi"><div class="kpi-label">毛需求</div><div class="kpi-value">{{ fmt(mrp.grossReq) }}</div></div>
+        <div class="kpi"><div class="kpi-label">可用库存</div><div class="kpi-value">{{ fmt(mrp.stock) }}</div></div>
+        <div class="kpi"><div class="kpi-label">净需求</div><div class="kpi-value">{{ fmt(mrp.netReq) }}</div></div>
+        <div class="kpi" :class="mrp.gap>=0?'good':'bad'"><div class="kpi-label">产能缺口</div><div class="kpi-value">{{ fmt(mrp.gap) }}</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>MRP 物料需求计划表</h2></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>版本</th><th>料号(SMT)</th><th>ASSY</th><th>PACK</th><th>壳料</th><th>模组</th><th>需求</th><th>库存</th><th>净需求</th><th>建议排产</th></tr></thead>
+            <tbody>
+              <tr v-for="(r,i) in mrp.rows" :key="i">
+                <td class="strong">{{ r.version }}</td>
+                <td>{{ r.smt_part }}</td><td>{{ r.assy_part }}</td><td>{{ r.pack_part }}</td>
+                <td>{{ r.shell }}</td><td>{{ r.module }}</td>
+                <td>{{ fmt(r.demand) }}</td><td>{{ fmt(r.stock) }}</td>
+                <td :class="r.net>0?'neg':'pos'">{{ fmt(r.net) }}</td>
+                <td>{{ fmt(r.schedule) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>生产排产表（按线体 · 按周）</h2><span class="hint">产能约束排产结果</span></div>
+        <div class="table-wrap">
+          <table class="data-table compact">
+            <thead><tr><th>线体</th><th>制程</th><th v-for="w in schedWeeks" :key="w">{{ w }}</th><th>合计</th></tr></thead>
+            <tbody>
+              <tr v-for="(row,i) in schedRows" :key="i">
+                <td class="strong">{{ row.line }}</td><td>{{ row.process }}</td>
+                <td v-for="w in schedWeeks" :key="w">{{ row.weeks[w] ? fmt(row.weeks[w]) : '-' }}</td>
+                <td class="strong">{{ fmt(row.total) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 6. 数据录入 ============ -->
+    <section v-show="view==='entry'" class="page">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h2>录入每日线体达成</h2></div>
+          <form class="entry-form" @submit.prevent="addRecord">
+            <label>日期 <input type="date" v-model="form.date" required></label>
+            <label>线体
+              <select v-model="form.line" required>
+                <option v-for="l in lines" :key="l.id" :value="l.line">{{ l.line }} ({{ l.process }})</option>
+              </select>
+            </label>
+            <label>班别 <select v-model="form.shift"><option>白班</option><option>夜班</option></select></label>
+            <label>机种/版本 <input v-model="form.model" placeholder="如 31LE0MA4B1A-EA"></label>
+            <div class="row">
+              <label>目标产出 <input type="number" v-model.number="form.target"></label>
+              <label>实际产出 <input type="number" v-model.number="form.output_qty"></label>
+            </div>
+            <div class="row">
+              <label>投入/半成品 <input type="number" v-model.number="form.input_qty"></label>
+              <label>人力 <input type="number" v-model.number="form.headcount"></label>
+            </div>
+            <label>产能损失原因 <input v-model="form.loss_reason" placeholder="如 换线/缺料/设备故障"></label>
+            <button class="btn primary" type="submit">保存记录</button>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>本机录入记录（{{ records.length }}）</h2>
+            <button class="btn ghost" @click="exportRecords">导出 JSON</button>
+          </div>
+          <div class="table-wrap short">
+            <table class="data-table compact">
+              <thead><tr><th>日期</th><th>线体</th><th>班别</th><th>目标</th><th>产出</th><th>达成率</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="(r,i) in records" :key="i">
+                  <td>{{ r.date }}</td><td class="strong">{{ r.line }}</td><td>{{ r.shift }}</td>
+                  <td>{{ fmt(r.target) }}</td><td>{{ fmt(r.output_qty) }}</td>
+                  <td><span class="rate-pill" :class="rateClass(r.achieve_rate)">{{ r.achieve_rate!=null?(r.achieve_rate*100).toFixed(1)+'%':'-' }}</span></td>
+                  <td><button class="btn-mini danger" @click="delRecord(i)">删</button></td>
+                </tr>
+                <tr v-if="!records.length"><td colspan="7" class="empty">暂无录入记录（数据保存在浏览器本地）</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">录入数据保存在浏览器 localStorage；点击「导出 JSON」可同步到后端或提交到仓库 data/records.json。</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>线体基础资料（UPH / 标工）</h2></div>
+        <div class="table-wrap">
+          <table class="data-table compact">
+            <thead><tr><th>线体</th><th>制程</th><th>楼层</th><th>说明</th><th>UPH</th><th>时产量</th><th>日产量</th><th>日产量TTL</th><th>备注</th></tr></thead>
+            <tbody>
+              <tr v-for="l in lines" :key="l.id">
+                <td class="strong">{{ l.line }}</td><td>{{ l.process }}</td><td>{{ l.floor }}</td>
+                <td>{{ l.desc }}</td><td>{{ l.uph }}</td><td>{{ fmt(l.hourly_output) }}</td>
+                <td>{{ fmt(l.daily_output) }}</td><td>{{ fmt(l.daily_ttl_output) }}</td>
+                <td class="muted">{{ l.note }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>PMC 生产制造管理系统 · 数据源: LE0 富智康</span>
+    <span>{{ dataVersion }}</span>
+  </footer>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
+<script src="js/engines.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

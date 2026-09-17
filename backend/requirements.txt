@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+# 数据构建 (tools/build_data.py)
+pandas>=2.0
+openpyxl>=3.1
+# 可选: Prophet 预测增强
+# prophet>=1.1
