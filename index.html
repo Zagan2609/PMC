@@ -417,6 +417,33 @@
         <div class="kpi" :class="mrp.gap>=0?'good':'bad'"><div class="kpi-label">产能缺口</div><div class="kpi-value">{{ fmt(mrp.gap) }}</div></div>
       </div>
       <div class="card">
+        <div class="card-head"><h2>主计划排产计划 (RU Plan)</h2>
+          <span class="hint">{{ schedule.source }} · {{ schedule.orders.length }} 订单 × {{ schedule.weeks.length }} 周
+            <button class="btn-mini" style="margin-left:8px" @click="exportMasterSchedule">导出 CSV/Excel</button>
+          </span>
+        </div>
+        <div class="table-wrap short">
+          <table class="data-table compact">
+            <thead>
+              <tr><th>序号</th><th>版本</th><th>软体</th><th>说明</th><th>壳料</th><th>模组</th><th>SMT料号</th><th>ASSY料号</th><th>PACK料号</th><th>RU加总</th><th>排产汇总</th><th>GAP</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="o in schedule.orders" :key="o.seq">
+                <td>{{ o.seq }}</td>
+                <td><span class="rate-pill" :class="o.version==='EA'?'warn':'good'">{{ o.version }}</span></td>
+                <td>{{ o.sw_type }}</td>
+                <td>{{ o.desc }}</td>
+                <td>{{ o.shell }}</td><td>{{ o.module }}</td>
+                <td class="muted">{{ o.smt_part }}</td><td class="muted">{{ o.assy_part }}</td><td class="muted">{{ o.pack_part }}</td>
+                <td>{{ fmt(o.ru_total) }}</td><td>{{ fmt(o.plan_total) }}</td>
+                <td :class="o.gap>0?'neg':'pos'">{{ fmt(o.gap) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="card-head"><h2>MRP 物料需求计划表</h2></div>
         <div class="table-wrap">
           <table class="data-table">

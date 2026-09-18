@@ -572,6 +572,11 @@ createApp({
       this.fcRulesLines.forEach(l => rows.push([l.line, l.process, l.floor, l.version || '不限', l.uph, l.shift_cap, l.note, Math.round(l.base_daily), l.co_per_week]));
       this.exportBoth('LE0_UPH标准工时', rows);
     },
+    exportMasterSchedule() {
+      const rows = [['序号', '版本', '软体', '说明', '壳料', '模组', 'SMT料号', 'ASSY料号', 'PACK料号', 'RU加总', '排产汇总', 'GAP']];
+      this.schedule.orders.forEach(o => rows.push([o.seq, o.version, o.sw_type, o.desc, o.shell, o.module, o.smt_part, o.assy_part, o.pack_part, o.ru_total, o.plan_total, o.gap]));
+      this.exportBoth('LE0主计划排产计划_RU_Plan', rows);
+    },
 
     /* ---------- 数据录入 ---------- */
     loadRecords() {
